@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import DashboardHeader from '@/components/dashboard/DashboardHeader';
 import ApplicationCard from '@/components/dashboard/ApplicationCard';
@@ -18,6 +19,7 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingApp, setEditingApp] = useState<Application | null>(null);
+  const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
@@ -110,11 +112,9 @@ const Index = () => {
   };
 
   const handleViewDetails = (app: Application) => {
-    // TODO: Implement detailed view
-    toast({
-      title: "Coming Soon",
-      description: "Detailed monitoring history view will be available soon.",
-    });
+    if (app.id) {
+      navigate(`/app/${app.id}`);
+    }
   };
 
   if (loading) {
