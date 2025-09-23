@@ -1,29 +1,30 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Activity, Clock, TrendingUp, AlertTriangle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Application, 
-  StatusLog, 
-  getApplications, 
-  getStatusLogs, 
-  calculateUptime 
-} from '@/lib/database';
-import { getStatusColor, formatResponseTime } from '@/lib/monitoring';
-import StatusChart from '@/components/charts/StatusChart';
-import ResponseTimeChart from '@/components/charts/ResponseTimeChart';
-import UptimeChart from '@/components/charts/UptimeChart';
-import StatusHistory from '@/components/monitoring/StatusHistory';
-import { useToast } from '@/hooks/use-toast';
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import {
+  ArrowLeft,
+  Activity,
+  Clock,
+  TrendingUp,
+  AlertTriangle,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Application, StatusLog } from "@/lib/database";
+import { api } from "@/lib/api";
+import { getStatusColor, formatResponseTime } from "@/lib/monitoring";
+import StatusChart from "@/components/charts/StatusChart";
+import ResponseTimeChart from "@/components/charts/ResponseTimeChart";
+import UptimeChart from "@/components/charts/UptimeChart";
+import StatusHistory from "@/components/monitoring/StatusHistory";
+import { useToast } from "@/hooks/use-toast";
 
 const ApplicationDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  
+
   const [application, setApplication] = useState<Application | null>(null);
   const [statusLogs, setStatusLogs] = useState<StatusLog[]>([]);
   const [stats, setStats] = useState({
@@ -32,7 +33,7 @@ const ApplicationDetails = () => {
     uptime30d: 0,
     avgResponseTime: 0,
     totalChecks: 0,
-    failures: 0
+    failures: 0,
   });
   const [loading, setLoading] = useState(true);
 
@@ -44,31 +45,61 @@ const ApplicationDetails = () => {
 
   const loadApplicationDetails = async () => {
     try {
-      const appId = parseInt(id!);
-      const apps = await getApplications();
-      const app = apps.find(a => a.id === appId);
-      
-      if (!app) {
+      const appId = Number(id);
+      // fetch app from backend
+      const appResp = await api<{
+        ok: boolean;
+        app: Application & { alertEmails?: string };
+      }>(`/api/apps/${appId}`);
+      const appRow = appResp.app;
+      if (!appRow) {
         toast({
           title: "Application Not Found",
           description: "The requested application could not be found.",
           variant: "destructive",
         });
-        navigate('/');
+        navigate("/");
         return;
       }
+      setApplication(appRow);
 
-      setApplication(app);
-      
-      // Load status logs
-      const logs = await getStatusLogs(appId);
+      // logs
+      const logsResp = await api<{ ok: boolean; logs: StatusLog[] }>(
+        `/api/apps/${appId}/logs?limit=500`
+      );
+      const logs = logsResp.logs || [];
       setStatusLogs(logs);
-      
-      // Calculate statistics
-      await calculateStats(appId, logs);
-      
+
+      // stats: uptime 24h/7d/30d
+      const [u24Resp, u7Resp, u30Resp] = await Promise.all([
+        api<{ ok: boolean; uptime: number }>(
+          `/api/apps/${appId}/uptime?hours=24`
+        ),
+        api<{ ok: boolean; uptime: number }>(
+          `/api/apps/${appId}/uptime?hours=${24 * 7}`
+        ),
+        api<{ ok: boolean; uptime: number }>(
+          `/api/apps/${appId}/uptime?hours=${24 * 30}`
+        ),
+      ]);
+
+      const totalChecks = logs.length;
+      const failures = logs.filter((l) => l.status === "DOWN").length;
+      const avgResponseTime =
+        logs.length > 0
+          ? logs.reduce((s, l) => s + (l.responseTime || 0), 0) / logs.length
+          : 0;
+
+      setStats({
+        uptime24h: u24Resp.uptime ?? 0,
+        uptime7d: u7Resp.uptime ?? 0,
+        uptime30d: u30Resp.uptime ?? 0,
+        avgResponseTime,
+        totalChecks,
+        failures,
+      });
     } catch (error) {
-      console.error('Failed to load application details:', error);
+      console.error("Failed to load application details:", error);
       toast({
         title: "Loading Error",
         description: "Failed to load application details.",
@@ -88,10 +119,11 @@ const ApplicationDetails = () => {
       ]);
 
       const totalChecks = logs.length;
-      const failures = logs.filter(log => log.status === 'DOWN').length;
-      const avgResponseTime = logs.length > 0 
-        ? logs.reduce((sum, log) => sum + log.responseTime, 0) / logs.length 
-        : 0;
+      const failures = logs.filter((log) => log.status === "DOWN").length;
+      const avgResponseTime =
+        logs.length > 0
+          ? logs.reduce((sum, log) => sum + log.responseTime, 0) / logs.length
+          : 0;
 
       setStats({
         uptime24h,
@@ -99,10 +131,10 @@ const ApplicationDetails = () => {
         uptime30d,
         avgResponseTime,
         totalChecks,
-        failures
+        failures,
       });
     } catch (error) {
-      console.error('Failed to calculate stats:', error);
+      console.error("Failed to calculate stats:", error);
     }
   };
 
@@ -111,7 +143,9 @@ const ApplicationDetails = () => {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">
           <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-          <p className="text-muted-foreground">Loading application details...</p>
+          <p className="text-muted-foreground">
+            Loading application details...
+          </p>
         </div>
       </div>
     );
@@ -122,17 +156,19 @@ const ApplicationDetails = () => {
   }
 
   const latestStatus = statusLogs[0];
-  const statusColor = latestStatus ? getStatusColor(latestStatus.status) : 'muted';
+  const statusColor = latestStatus
+    ? getStatusColor(latestStatus.status)
+    : "muted";
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto p-6">
         {/* Header */}
         <div className="flex items-center space-x-4 mb-6">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => navigate('/')}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate("/")}
             className="flex items-center space-x-2"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -143,21 +179,39 @@ const ApplicationDetails = () => {
         {/* Application Info */}
         <div className="mb-8">
           <div className="flex items-center space-x-4 mb-4">
-            <div className={`w-4 h-4 rounded-full ${
-              latestStatus?.status === 'UP' ? 'bg-success' :
-              latestStatus?.status === 'DOWN' ? 'bg-destructive' :
-              'bg-warning'
-            }`} />
+            <div
+              className={`w-4 h-4 rounded-full ${
+                latestStatus?.status === "UP"
+                  ? "bg-success"
+                  : latestStatus?.status === "DOWN"
+                  ? "bg-destructive"
+                  : "bg-warning"
+              }`}
+            />
             <h1 className="text-3xl font-bold">{application.name}</h1>
-            <Badge 
-              variant={latestStatus?.status === 'UP' ? 'default' : 'destructive'}
+            <Badge
+              variant={
+                latestStatus?.status === "UP" ? "default" : "destructive"
+              }
               className={`
-                ${latestStatus?.status === 'UP' ? 'bg-success text-success-foreground' : ''}
-                ${latestStatus?.status === 'DOWN' ? 'bg-destructive text-destructive-foreground' : ''}
-                ${latestStatus?.status === 'CHECKING' ? 'bg-warning text-warning-foreground' : ''}
+                ${
+                  latestStatus?.status === "UP"
+                    ? "bg-success text-success-foreground"
+                    : ""
+                }
+                ${
+                  latestStatus?.status === "DOWN"
+                    ? "bg-destructive text-destructive-foreground"
+                    : ""
+                }
+                ${
+                  latestStatus?.status === "CHECKING"
+                    ? "bg-warning text-warning-foreground"
+                    : ""
+                }
               `}
             >
-              {latestStatus?.status || 'UNKNOWN'}
+              {latestStatus?.status || "UNKNOWN"}
             </Badge>
           </div>
           <p className="text-muted-foreground text-lg">{application.url}</p>
@@ -171,17 +225,26 @@ const ApplicationDetails = () => {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.uptime24h.toFixed(1)}%</div>
-              <div className={`w-full h-2 rounded-full mt-2 ${
-                stats.uptime24h >= 99 ? 'bg-success' :
-                stats.uptime24h >= 95 ? 'bg-warning' : 'bg-destructive'
-              }`} />
+              <div className="text-2xl font-bold">
+                {stats.uptime24h.toFixed(1)}%
+              </div>
+              <div
+                className={`w-full h-2 rounded-full mt-2 ${
+                  stats.uptime24h >= 99
+                    ? "bg-success"
+                    : stats.uptime24h >= 95
+                    ? "bg-warning"
+                    : "bg-destructive"
+                }`}
+              />
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Avg Response</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                Avg Response
+              </CardTitle>
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -196,7 +259,9 @@ const ApplicationDetails = () => {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Checks</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                Total Checks
+              </CardTitle>
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -213,7 +278,9 @@ const ApplicationDetails = () => {
               <AlertTriangle className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stats.uptime30d.toFixed(1)}%</div>
+              <div className="text-2xl font-bold">
+                {stats.uptime30d.toFixed(1)}%
+              </div>
               <p className="text-xs text-muted-foreground mt-1">
                 vs {stats.uptime7d.toFixed(1)}% 7d
               </p>
