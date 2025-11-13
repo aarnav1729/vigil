@@ -5,6 +5,14 @@ import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import ApplicationCard from "@/components/dashboard/ApplicationCard";
 import ApplicationForm from "@/components/forms/ApplicationForm";
 import EmptyState from "@/components/dashboard/EmptyState";
+import {
+  initializeDatabase,
+  getApplications,
+  addApplication,
+  updateApplication,
+  deleteApplication,
+} from "@/lib/database";
+
 // Use app shape returned by server; minimal fields used here.
 type Application = {
   id: number;
@@ -20,17 +28,26 @@ const Index = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingApp, setEditingApp] = useState<Application | null>(null);
+  const [summary, setSummary] = useState<{
+    total: number;
+    up: number;
+    down: number;
+    unknown?: number;
+    avgResponseTimeAll: number;
+  } | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
     initializeApp();
+    loadSummary();
   }, []);
 
   const initializeApp = async () => {
     try {
       await initializeDatabase();
       await loadApplications();
+      await loadSummary();
     } catch (error) {
       console.error("Failed to initialize app:", error);
       toast({
@@ -44,10 +61,28 @@ const Index = () => {
     }
   };
 
+  const loadSummary = async () => {
+    try {
+      const res = await api<{
+        ok: boolean;
+        summary: {
+          total: number;
+          up: number;
+          down: number;
+          unknown?: number;
+          avgResponseTimeAll: number;
+        };
+      }>("/api/summary");
+      setSummary(res.summary);
+    } catch (e) {
+      console.warn("Failed to load summary:", e);
+    }
+  };
+
   const loadApplications = async () => {
     try {
       // Attempt to fetch from backend first and reconcile to local DB
-      let serverApps = [];
+      let serverApps: Application[] = [];
       try {
         const resp = await api<{ apps: Application[] }>("/api/apps");
         serverApps = resp.apps || [];
@@ -58,44 +93,43 @@ const Index = () => {
         );
       }
 
-      // Upsert server apps into local DB (so server wins for IDs)
+      // VIGIL_SYNC_FIX: if we have server apps, treat them as the source of truth
       if (serverApps.length > 0) {
-        // wipe out local entries with same id or upsert
-        for (const s of serverApps) {
-          // if an app with same URL exists locally but without server id, remove it to avoid duplicates
-          const localApps = await getApplications();
-          const dup = localApps.find(
-            (la) => la.url === s.url && (!la.id || la.id !== s.id)
-          );
-          if (dup && dup.id && dup.id !== s.id) {
-            // delete the local-only entry (we will re-insert with official id)
-            await deleteApplication(dup.id);
+        try {
+          const db = await initializeDatabase();
+          const tx = db.transaction("applications", "readwrite");
+
+          // wipe out ALL local entries – avoid zombie IDs like 5 that don't exist on server
+          await tx.store.clear();
+
+          for (const s of serverApps) {
+            if (!s.id) continue;
+            await tx.store.put({
+              id: s.id,
+              name: s.name,
+              url: s.url,
+              createdAt: s.createdAt || Date.now(),
+            } as Application);
           }
-          // ensure server app exists in local DB with same id
-          // NOTE: idb `add` will error if key exists; use `updateApplication` if present
-          try {
-            if (s.id) {
-              // try to update if present, otherwise add with same id via put
-              const db = await initializeDatabase();
-              // put keeps the same key (id)
-              await db.put("applications", {
-                id: s.id,
-                name: s.name,
-                url: s.url,
-                createdAt: s.createdAt,
-              } as Application);
-            }
-          } catch (e) {
-            console.warn("Failed to sync server app into local DB:", e);
-          }
+
+          await tx.done;
+        } catch (e) {
+          console.warn("Failed to sync server apps into local DB:", e);
         }
-        // reload local after upsert
-        const all = await getApplications();
-        setApplications(all);
+
+        // Render directly from serverApps (canonical)
+        setApplications(
+          serverApps.map((s) => ({
+            id: s.id,
+            name: s.name,
+            url: s.url,
+            createdAt: s.createdAt || Date.now(),
+          }))
+        );
         return;
       }
 
-      // If no server apps or server unreachable, fall back to local DB
+      // If no server apps or server unreachable, fall back to local DB (offline mode)
       const apps = await getApplications();
       setApplications(apps);
     } catch (error) {
@@ -204,6 +238,7 @@ const Index = () => {
       }
 
       await loadApplications();
+      await loadSummary();
     } catch (error) {
       console.error("Failed to save application:", error);
       toast({
@@ -228,6 +263,7 @@ const Index = () => {
       }
 
       await loadApplications();
+      await loadSummary();
       toast({
         title: "Application Deleted",
         description:
@@ -264,6 +300,37 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto">
         <DashboardHeader onAddApplication={handleAddApplication} />
+
+        {summary && (
+          <div className="px-6 pt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-lg border border-card-border">
+              <div className="text-xs text-muted-foreground">Total Apps</div>
+              <div className="text-2xl font-bold">{summary.total}</div>
+            </div>
+            <div className="p-4 rounded-lg border border-card-border">
+              <div className="text-xs text-muted-foreground">Up</div>
+              <div className="text-2xl font-bold text-success">
+                {summary.up}
+              </div>
+            </div>
+            <div className="p-4 rounded-lg border border-card-border">
+              <div className="text-xs text-muted-foreground">Down</div>
+              <div className="text-2xl font-bold text-destructive">
+                {summary.down}
+              </div>
+            </div>
+            <div className="p-4 rounded-lg border border-card-border">
+              <div className="text-xs text-muted-foreground">
+                Avg Response (24h)
+              </div>
+              <div className="text-2xl font-bold">
+                {summary.avgResponseTimeAll
+                  ? `${Math.round(summary.avgResponseTimeAll)}ms`
+                  : "-"}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-6">
           {applications.length === 0 ? (

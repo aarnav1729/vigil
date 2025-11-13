@@ -54,7 +54,24 @@ const ApplicationCard = ({
           `/api/apps/${application.id}/uptime?hours=24`
         ),
       ]);
-      const latest = logsRes.logs && logsRes.logs[0] ? logsRes.logs[0] : null;
+      const raw = logsRes.logs && logsRes.logs[0] ? logsRes.logs[0] : null;
+      const latest = raw
+        ? {
+            ...raw,
+            timestamp:
+              typeof raw.timestamp === "string"
+                ? Number(raw.timestamp)
+                : raw.timestamp,
+            statusCode:
+              typeof raw.statusCode === "string"
+                ? Number(raw.statusCode)
+                : raw.statusCode,
+            responseTime:
+              typeof raw.responseTime === "string"
+                ? Number(raw.responseTime)
+                : raw.responseTime,
+          }
+        : null;
       setLatestLog(latest);
       setUptime(uptimeRes.uptime ?? 0);
     } catch (err) {

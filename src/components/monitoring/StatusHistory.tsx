@@ -1,11 +1,11 @@
-import React from 'react';
-import { Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { StatusLog } from '@/lib/database';
-import { formatResponseTime } from '@/lib/monitoring';
-import { format } from 'date-fns';
+import React from "react";
+import { Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { StatusLog } from "@/lib/database";
+import { formatResponseTime } from "@/lib/monitoring";
+import { format } from "date-fns";
 
 interface StatusHistoryProps {
   logs: StatusLog[];
@@ -14,9 +14,9 @@ interface StatusHistoryProps {
 const StatusHistory = ({ logs }: StatusHistoryProps) => {
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'UP':
+      case "UP":
         return <CheckCircle className="w-4 h-4 text-success" />;
-      case 'DOWN':
+      case "DOWN":
         return <XCircle className="w-4 h-4 text-destructive" />;
       default:
         return <AlertCircle className="w-4 h-4 text-warning" />;
@@ -24,13 +24,18 @@ const StatusHistory = ({ logs }: StatusHistoryProps) => {
   };
 
   const getStatusBadge = (status: string) => {
-    const variant = status === 'UP' ? 'default' : status === 'DOWN' ? 'destructive' : 'secondary';
+    const variant =
+      status === "UP"
+        ? "default"
+        : status === "DOWN"
+        ? "destructive"
+        : "secondary";
     const className = `
-      ${status === 'UP' ? 'bg-success text-success-foreground' : ''}
-      ${status === 'DOWN' ? 'bg-destructive text-destructive-foreground' : ''}
-      ${status === 'CHECKING' ? 'bg-warning text-warning-foreground' : ''}
+      ${status === "UP" ? "bg-success text-success-foreground" : ""}
+      ${status === "DOWN" ? "bg-destructive text-destructive-foreground" : ""}
+      ${status === "CHECKING" ? "bg-warning text-warning-foreground" : ""}
     `;
-    
+
     return (
       <Badge variant={variant} className={className}>
         {status}
@@ -46,7 +51,8 @@ const StatusHistory = ({ logs }: StatusHistoryProps) => {
         </CardHeader>
         <CardContent>
           <div className="text-center py-8 text-muted-foreground">
-            No status history available yet. Checks will appear here as they are performed.
+            No status history available yet. Checks will appear here as they are
+            performed.
           </div>
         </CardContent>
       </Card>
@@ -65,8 +71,8 @@ const StatusHistory = ({ logs }: StatusHistoryProps) => {
         <ScrollArea className="h-[500px] pr-4">
           <div className="space-y-4">
             {logs.map((log, index) => (
-              <div 
-                key={log.id || index} 
+              <div
+                key={log.id || index}
                 className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center space-x-4">
@@ -79,11 +85,14 @@ const StatusHistory = ({ logs }: StatusHistoryProps) => {
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {format(new Date(log.timestamp), 'MMM dd, yyyy HH:mm:ss')}
+                      {format(
+                        new Date(Number(log.timestamp)),
+                        "MMM dd, yyyy HH:mm:ss"
+                      )}
                     </p>
                   </div>
                 </div>
-                
+
                 <div className="text-right">
                   <div className="font-medium">
                     {formatResponseTime(log.responseTime)}

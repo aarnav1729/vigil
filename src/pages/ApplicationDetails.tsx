@@ -36,6 +36,24 @@ const ApplicationDetails = () => {
     failures: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [diagnostics, setDiagnostics] = useState<{
+    meta: {
+      dnsOk: boolean;
+      resolvedIp: string | null;
+      tcpOk: boolean;
+      tcpMs: number;
+      httpOk: boolean;
+      httpMs: number;
+      statusCode: number;
+      error?: string | null;
+    } | null;
+    log: any;
+  } | null>(null);
+
+  const scheme =
+    (diagnostics?.meta?.scheme as string) ??
+    (application?.url?.startsWith("https") ? "https" : "http");
+  const schemeLabel = (scheme || "https").toUpperCase();
 
   useEffect(() => {
     if (id) {
@@ -67,7 +85,19 @@ const ApplicationDetails = () => {
       const logsResp = await api<{ ok: boolean; logs: StatusLog[] }>(
         `/api/apps/${appId}/logs?limit=500`
       );
-      const logs = logsResp.logs || [];
+      const logs = (logsResp.logs || []).map((l) => ({
+        ...l,
+        timestamp:
+          typeof l.timestamp === "string" ? Number(l.timestamp) : l.timestamp,
+        statusCode:
+          typeof l.statusCode === "string"
+            ? Number(l.statusCode)
+            : l.statusCode,
+        responseTime:
+          typeof l.responseTime === "string"
+            ? Number(l.responseTime)
+            : l.responseTime,
+      }));
       setStatusLogs(logs);
 
       // stats: uptime 24h/7d/30d
@@ -98,6 +128,16 @@ const ApplicationDetails = () => {
         totalChecks,
         failures,
       });
+
+      // diagnostics (network→tcp→http)
+      try {
+        const diag = await api<{ ok: boolean; meta: any; log: any }>(
+          `/api/apps/${appId}/diagnostics`
+        );
+        setDiagnostics({ meta: diag.meta || null, log: diag.log || null });
+      } catch (e) {
+        console.warn("Failed to load diagnostics:", e);
+      }
     } catch (error) {
       console.error("Failed to load application details:", error);
       toast({
@@ -290,11 +330,12 @@ const ApplicationDetails = () => {
 
         {/* Charts and History */}
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="response-time">Response Time</TabsTrigger>
             <TabsTrigger value="uptime">Uptime Trends</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
+            <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
@@ -314,6 +355,85 @@ const ApplicationDetails = () => {
 
           <TabsContent value="history">
             <StatusHistory logs={statusLogs} />
+          </TabsContent>
+
+          <TabsContent value="diagnostics">
+            <Card>
+              <CardHeader>
+                <CardTitle>Network & App Diagnostics</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {!diagnostics?.meta ? (
+                  <div className="text-muted-foreground">
+                    No diagnostics yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>DNS</span>{" "}
+                        <span
+                          className={
+                            diagnostics.meta.dnsOk
+                              ? "text-success"
+                              : "text-destructive"
+                          }
+                        >
+                          {diagnostics.meta.dnsOk ? "OK" : "FAIL"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>Resolved IP</span>
+                        <span className="font-mono">
+                          {diagnostics.meta.resolvedIp || "-"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>TCP Connect</span>
+                        <span
+                          className={
+                            diagnostics.meta.tcpOk
+                              ? "text-success"
+                              : "text-destructive"
+                          }
+                        >
+                          {diagnostics.meta.tcpOk
+                            ? `${diagnostics.meta.tcpMs} ms`
+                            : "FAIL"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>Reachability ({schemeLabel})</span>
+                        <span
+                          className={
+                            diagnostics.meta.httpOk
+                              ? "text-success"
+                              : "text-destructive"
+                          }
+                        >
+                          {diagnostics.meta.httpOk ? "OK" : "FAIL"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>Status ({schemeLabel})</span>
+                        <span>{diagnostics.meta.statusCode}</span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 rounded border">
+                        <span>{schemeLabel} Time</span>
+                        <span>{diagnostics.meta.httpMs} ms</span>
+                      </div>
+                      {diagnostics.meta.error && (
+                        <div className="p-3 rounded border text-destructive text-sm">
+                          {diagnostics.meta.error}{" "}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

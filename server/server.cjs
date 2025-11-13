@@ -20,7 +20,7 @@ const https = require("https");
 const PORT = Number(process.env.PORT || 3337);
 const MONITOR_INTERVAL_MINUTES = Math.max(
   1,
-  Number(process.env.MONITOR_INTERVAL_MINUTES || 60)
+  Number(process.env.MONITOR_INTERVAL_MINUTES || 10)
 );
 const REQUEST_TIMEOUT_MS = Math.max(
   1000,
@@ -202,20 +202,20 @@ async function insertLog({
   statusCode,
   responseTime,
   timestamp,
+  meta = null,
 }) {
-  meta,
-    await pool
-      .request()
-      .input("applicationId", sql.Int, applicationId)
-      .input("status", sql.NVarChar(10), status)
-      .input("statusCode", sql.Int, statusCode)
-      .input("responseTime", sql.Int, responseTime)
-      .input("timestamp", sql.BigInt, timestamp)
-      .input("meta", sql.NVarChar(sql.MAX), meta ? JSON.stringify(meta) : null)
-      .query(
-        `INSERT INTO dbo.status_logs (applicationId, status, statusCode, responseTime, timestamp, meta)
-      VALUES (@applicationId, @status, @statusCode, @responseTime, @timestamp, @meta)`
-      );
+  await pool
+    .request()
+    .input("applicationId", sql.Int, applicationId)
+    .input("status", sql.NVarChar(10), status)
+    .input("statusCode", sql.Int, statusCode)
+    .input("responseTime", sql.Int, responseTime)
+    .input("timestamp", sql.BigInt, timestamp)
+    .input("meta", sql.NVarChar(sql.MAX), meta ? JSON.stringify(meta) : null)
+    .query(
+      `INSERT INTO dbo.status_logs (applicationId, status, statusCode, responseTime, timestamp, meta)
+       VALUES (@applicationId, @status, @statusCode, @responseTime, @timestamp, @meta)`
+    );
 }
 
 // get recent logs (limit)
@@ -226,7 +226,10 @@ async function getLogs(applicationId, limit = 200) {
     .input("applicationId", sql.Int, applicationId)
     .input("limit", sql.Int, limit)
     .query(
-      `SELECT TOP (@limit) id, applicationId, status, statusCode, responseTime, timestamp FROM dbo.status_logs WHERE applicationId=@applicationId ORDER BY timestamp DESC`
+      `SELECT TOP (@limit) id, applicationId, status, statusCode, responseTime, timestamp, meta
+   FROM dbo.status_logs
+   WHERE applicationId=@applicationId
+   ORDER BY timestamp DESC`
     );
   return r.recordset;
 }
@@ -239,20 +242,24 @@ async function getLogsBetween(applicationId, fromMs, toMs) {
     .input("fromMs", sql.BigInt, fromMs)
     .input("toMs", sql.BigInt, toMs)
     .query(
-      "SELECT id, applicationId, status, statusCode, responseTime, timestamp FROM dbo.status_logs WHERE applicationId=@applicationId AND timestamp BETWEEN @fromMs AND @toMs ORDER BY timestamp ASC"
+      `SELECT id, applicationId, status, statusCode, responseTime, timestamp, meta
+  FROM dbo.status_logs
+  WHERE applicationId=@applicationId AND timestamp BETWEEN @fromMs AND @toMs
+  ORDER BY timestamp ASC`
     );
   return r.recordset;
 }
 
+// --- diagnostics: DNS + TCP + HTTP(S) using the URL as given ---
+// VIGIL_DIAG_FIX
 async function diagnoseUrl(urlStr) {
-  const started = Date.now();
   const urlObj = new URL(urlStr);
+  const isHttps = urlObj.protocol === "https:";
+
+  // Use the actual host + port from the URL
   const host = urlObj.hostname;
-  const port = urlObj.port
-    ? Number(urlObj.port)
-    : urlObj.protocol === "https:"
-    ? 443
-    : 80;
+  const port = urlObj.port ? Number(urlObj.port) : isHttps ? 443 : 80;
+
   const out = {
     dnsOk: false,
     resolvedIp: null,
@@ -262,16 +269,20 @@ async function diagnoseUrl(urlStr) {
     statusCode: 0,
     httpMs: 0,
     error: null,
+    scheme: isHttps ? "https" : "http",
   };
+
+  // 1) DNS
   try {
     const a = await dns.lookup(host);
     out.dnsOk = true;
     out.resolvedIp = a.address;
   } catch (e) {
-    out.error = `DNS_FAIL: ${e}`;
+    out.error = `DNS_FAIL: ${e && e.code ? e.code : e}`;
     return out;
   }
-  // TCP probe
+
+  // 2) TCP probe to the *real* port for this URL
   const t1 = performance.now();
   await new Promise((resolve) => {
     const socket = new net.Socket();
@@ -289,16 +300,46 @@ async function diagnoseUrl(urlStr) {
     socket.on("error", () => done(false));
     socket.connect(port, out.resolvedIp);
   });
+
   if (!out.tcpOk) {
-    out.error = out.error || "TCP_FAIL";
+    // real port is not reachable from the VM
+    out.error = `TCP_FAIL:${port}`;
     return out;
   }
-  // HTTP probe
-  const httpRes = await timedFetch(urlStr, REQUEST_TIMEOUT_MS);
-  out.httpOk = httpRes.ok;
-  out.statusCode = httpRes.statusCode;
-  out.httpMs = httpRes.responseTime;
-  if (!httpRes.ok && httpRes.error) out.error = `HTTP_FAIL: ${httpRes.error}`;
+
+  // 3) HTTP(S) check on the *exact* URL
+  const primaryUrl = urlObj.toString();
+  const primaryRes = await timedFetch(primaryUrl, REQUEST_TIMEOUT_MS);
+  out.httpOk = primaryRes.ok;
+  out.statusCode = primaryRes.statusCode;
+  out.httpMs = primaryRes.responseTime;
+
+  if (!primaryRes.ok && primaryRes.error) {
+    out.error = `${isHttps ? "HTTPS" : "HTTP"}_FAIL: ${primaryRes.error}`;
+  }
+
+  // Optional: if original was http and it failed, try https upgrade on 443
+  if (!out.httpOk && !isHttps) {
+    try {
+      const httpsUrl = new URL(primaryUrl);
+      httpsUrl.protocol = "https:";
+      httpsUrl.port = ""; // 443
+      const httpsRes = await timedFetch(
+        httpsUrl.toString(),
+        REQUEST_TIMEOUT_MS
+      );
+      if (httpsRes.ok) {
+        out.httpOk = true;
+        out.statusCode = httpsRes.statusCode;
+        out.httpMs = httpsRes.responseTime;
+        out.error = null;
+        out.scheme = "https-upgrade";
+      }
+    } catch {
+      // keep original error if https upgrade also fails
+    }
+  }
+
   return out;
 }
 
@@ -316,8 +357,11 @@ async function timedFetch(url, timeoutMs) {
       headers: { "User-Agent": "VigilMonitor/1.0" },
     });
     const elapsed = Math.max(0, Math.round(performance.now() - started));
-    const httpOk = resp.status < 400; // treat 3xx as UP as well
-    return { ok: httpOk, statusCode: resp.status, responseTime: elapsed };
+    // Presence rule:
+    // <500 == reachable (2xx/3xx/4xx acceptable for "app present")
+    // 5xx/network == not ok
+    const presenceOk = resp.status < 500;
+    return { ok: presenceOk, statusCode: resp.status, responseTime: elapsed };
   } catch (err) {
     const elapsed = Math.max(0, Math.round(performance.now() - started));
     return {
@@ -384,6 +428,7 @@ async function checkOne(appRow) {
       httpMs: diag.httpMs,
       statusCode: diag.statusCode,
       error: diag.error,
+      scheme: diag.scheme || "https",
     },
   };
 
@@ -624,6 +669,7 @@ app.get("/api/summary", async (req, res) => {
     const rows = [];
     let upCount = 0;
     let downCount = 0;
+    let unknownCount = 0;
     let totalAvgResp = 0;
     for (const a of apps) {
       const logs = await getLogsBetween(a.id, from24h, now);
@@ -632,9 +678,19 @@ app.get("/api/summary", async (req, res) => {
       const uptime24h = (up / total) * 100;
       const avgResp =
         logs.reduce((s, r) => s + (r.responseTime || 0), 0) / total;
-      const latest = logs[logs.length - 1] || null;
-      if (latest?.status === "UP") upCount++;
-      else downCount++;
+      // Determine latest status (prefer within 24h; else any latest)
+      let latest = logs[logs.length - 1] || null;
+      if (!latest) {
+        const lastAny = await getLogs(a.id, 1);
+        latest = lastAny[0] || null;
+      }
+      if (!latest) {
+        unknownCount++;
+      } else if (latest.status === "UP") {
+        upCount++;
+      } else if (latest.status === "DOWN") {
+        downCount++;
+      }
       totalAvgResp += avgResp;
       rows.push({
         id: a.id,
@@ -653,6 +709,7 @@ app.get("/api/summary", async (req, res) => {
         total: apps.length,
         up: upCount,
         down: downCount,
+        unknown: unknownCount,
         avgResponseTimeAll,
       },
       apps: rows,
