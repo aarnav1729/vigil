@@ -6,6 +6,92 @@
 
 @layer base {
   :root {
+    /* LIGHT THEME – clean, neutral base with blue accent */
+
+    /* Base Colors */
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    /* Card System */
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --card-border: 214.3 31.8% 91.4%;
+
+    /* Interactive Elements */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Brand Colors */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 98%;
+    --primary-glow: 217 91% 70%;
+
+    /* Status Colors */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 98%;
+    --success-glow: 142 71% 55%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 20 14% 4%;
+    --warning-glow: 38 92% 60%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --destructive-glow: 0 84% 70%;
+
+    /* Neutral Tones */
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 20.2% 50%;
+
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+
+    /* Form Elements */
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.75rem;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(
+      135deg,
+      hsl(var(--primary)),
+      hsl(var(--primary-glow))
+    );
+    --gradient-success: linear-gradient(
+      135deg,
+      hsl(var(--success)),
+      hsl(var(--success-glow))
+    );
+    --gradient-destructive: linear-gradient(
+      135deg,
+      hsl(var(--destructive)),
+      hsl(var(--destructive-glow))
+    );
+    --gradient-hero: linear-gradient(
+      135deg,
+      hsl(var(--primary)) 0%,
+      hsl(var(--primary-glow)) 100%
+    );
+
+    /* Shadows */
+    --shadow-elegant: 0 10px 30px -10px hsl(var(--primary) / 0.18);
+    --shadow-status: 0 4px 20px -4px;
+    --shadow-card: 0 4px 6px -1px hsl(0 0% 0% / 0.06),
+      0 2px 4px -1px hsl(0 0% 0% / 0.04);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.2s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .dark {
+    /* DARK THEME – your original Vigil palette */
+
     /* Base Colors */
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
@@ -55,15 +141,32 @@
     --radius: 0.75rem;
 
     /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
-    --gradient-success: linear-gradient(135deg, hsl(var(--success)), hsl(var(--success-glow)));
-    --gradient-destructive: linear-gradient(135deg, hsl(var(--destructive)), hsl(var(--destructive-glow)));
-    --gradient-hero: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary-glow)) 100%);
+    --gradient-primary: linear-gradient(
+      135deg,
+      hsl(var(--primary)),
+      hsl(var(--primary-glow))
+    );
+    --gradient-success: linear-gradient(
+      135deg,
+      hsl(var(--success)),
+      hsl(var(--success-glow))
+    );
+    --gradient-destructive: linear-gradient(
+      135deg,
+      hsl(var(--destructive)),
+      hsl(var(--destructive-glow))
+    );
+    --gradient-hero: linear-gradient(
+      135deg,
+      hsl(var(--primary)) 0%,
+      hsl(var(--primary-glow)) 100%
+    );
 
     /* Shadows */
     --shadow-elegant: 0 10px 30px -10px hsl(var(--primary) / 0.3);
     --shadow-status: 0 4px 20px -4px;
-    --shadow-card: 0 4px 6px -1px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.06);
+    --shadow-card: 0 4px 6px -1px hsl(0 0% 0% / 0.1),
+      0 2px 4px -1px hsl(0 0% 0% / 0.06);
 
     /* Animations */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -105,7 +208,8 @@
   }
 
   @keyframes pulse-glow {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
     }
     50% {

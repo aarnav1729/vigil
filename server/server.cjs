@@ -14,10 +14,13 @@ const { performance } = require("perf_hooks");
 const dns = require("dns").promises;
 const net = require("net");
 const fs = require("fs");
+const http = require("http");
 const https = require("https");
 
 // --- Config (env override strongly recommended) ---
-const PORT = Number(process.env.PORT || 3337);
+// Default to 22443 so nginx can SNI-passthrough like your other apps
+const PORT = Number(process.env.PORT || 22443);
+
 const MONITOR_INTERVAL_MINUTES = Math.max(
   1,
   Number(process.env.MONITOR_INTERVAL_MINUTES || 10)
@@ -344,35 +347,59 @@ async function diagnoseUrl(urlStr) {
 }
 
 // --- monitoring HTTP check ---
-async function timedFetch(url, timeoutMs) {
-  const controller = new AbortController();
-  const to = setTimeout(() => controller.abort(), timeoutMs);
-
+// --- monitoring HTTP check ---
+// VIGIL_FETCH_FIX: use http/https directly and relax TLS only for monitoring targets
+function timedFetch(urlStr, timeoutMs) {
   const started = performance.now();
-  try {
-    const resp = await fetch(url, {
+  const urlObj = new URL(urlStr);
+  const isHttps = urlObj.protocol === "https:";
+  const client = isHttps ? https : http;
+
+  return new Promise((resolve) => {
+    const options = {
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      port: urlObj.port || (isHttps ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
       method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
+      timeout: timeoutMs,
       headers: { "User-Agent": "VigilMonitor/1.0" },
-    });
-    const elapsed = Math.max(0, Math.round(performance.now() - started));
-    // Presence rule:
-    // <500 == reachable (2xx/3xx/4xx acceptable for "app present")
-    // 5xx/network == not ok
-    const presenceOk = resp.status < 500;
-    return { ok: presenceOk, statusCode: resp.status, responseTime: elapsed };
-  } catch (err) {
-    const elapsed = Math.max(0, Math.round(performance.now() - started));
-    return {
-      ok: false,
-      statusCode: 0,
-      responseTime: elapsed,
-      error: String(err),
+      // important: for monitoring we can be lenient about TLS chain issues
+      ...(isHttps ? { rejectUnauthorized: false } : {}),
     };
-  } finally {
-    clearTimeout(to);
-  }
+
+    const req = client.request(options, (res) => {
+      const elapsed = Math.max(0, Math.round(performance.now() - started));
+      // drain the response, we don't care about body
+      res.resume();
+
+      const statusCode = res.statusCode || 0;
+      const presenceOk = statusCode < 500; // treat 4xx as "app is present"
+      resolve({
+        ok: presenceOk,
+        statusCode,
+        responseTime: elapsed,
+      });
+    });
+
+    req.on("error", (err) => {
+      const elapsed = Math.max(0, Math.round(performance.now() - started));
+      resolve({
+        ok: false,
+        statusCode: 0,
+        responseTime: elapsed,
+        error:
+          (err && err.code ? `${err.code}: ` : "") +
+          (err && err.message ? err.message : String(err)),
+      });
+    });
+
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error("TIMEOUT"));
+    });
+
+    req.end();
+  });
 }
 
 // --- Graph mailer ---
@@ -692,6 +719,15 @@ app.get("/api/summary", async (req, res) => {
         downCount++;
       }
       totalAvgResp += avgResp;
+      // VIGIL_LASTCHECK_NUM: normalize BIGINT timestamp (string) to number
+      let lastCheckedAt = null;
+      if (latest && latest.timestamp != null) {
+        const rawTs = latest.timestamp;
+        const numTs =
+          typeof rawTs === "string" ? parseInt(rawTs, 10) : Number(rawTs);
+        lastCheckedAt = Number.isFinite(numTs) ? numTs : null;
+      }
+
       rows.push({
         id: a.id,
         name: a.name,
@@ -699,7 +735,7 @@ app.get("/api/summary", async (req, res) => {
         uptime24h,
         avgResponseTime24h: avgResp,
         latestStatus: latest?.status || "CHECKING",
-        lastCheckedAt: latest?.timestamp || null,
+        lastCheckedAt,
       });
     }
     const avgResponseTimeAll = rows.length > 0 ? totalAvgResp / rows.length : 0;
@@ -843,8 +879,12 @@ const httpsOptions = {
 (async () => {
   try {
     await connectMSSQL();
-    const server = app.listen(PORT, () => {
-      console.log(`🚀 Vigil server listening on http://localhost:${PORT}`);
+
+    // HTTPS server using same certs as other apps
+    const server = https.createServer(httpsOptions, app);
+
+    server.listen(PORT, HOST, () => {
+      console.log(`🚀 Vigil server listening on https://localhost:${PORT}`);
       console.log(
         `⏱ Monitor schedule every ${MONITOR_INTERVAL_MINUTES} minute(s)`
       );
@@ -872,12 +912,13 @@ const httpsOptions = {
         try {
           await pool.close();
         } catch (e) {
-          /*ignore*/
+          /* ignore */
         }
         process.exit(0);
       });
       setTimeout(() => process.exit(1), 10000).unref();
     }
+
     process.on("SIGINT", () => graceful("SIGINT"));
     process.on("SIGTERM", () => graceful("SIGTERM"));
   } catch (e) {
