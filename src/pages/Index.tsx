@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// src/pages/Index.tsx
+import { useState, useEffect, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
@@ -12,6 +13,13 @@ import {
   updateApplication,
   deleteApplication,
 } from "@/lib/database";
+import { api } from "@/lib/api";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Lock } from "lucide-react";
 
 // Use app shape returned by server; minimal fields used here.
 type Application = {
@@ -21,7 +29,8 @@ type Application = {
   createdAt: number;
   isDown?: boolean;
 };
-import { api } from "@/lib/api";
+
+const INDEX_PASSWORD = "aarnav";
 
 const Index = () => {
   const [applications, setApplications] = useState<Application[]>([]);
@@ -35,13 +44,22 @@ const Index = () => {
     unknown?: number;
     avgResponseTimeAll: number;
   } | null>(null);
+
+  // simple password gate state
+  const [unlocked, setUnlocked] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+
   const navigate = useNavigate();
   const { toast } = useToast();
 
+  // App initialization (DB + apps + summary)
   useEffect(() => {
     initializeApp();
     loadSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Read unlock flag from localStorage
 
   const initializeApp = async () => {
     try {
@@ -284,6 +302,72 @@ const Index = () => {
       navigate(`/app/${app.id}`);
     }
   };
+
+  // 🔐 Simple password gate just for Index (hardcoded "aarnav")
+  const handleUnlock = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (passwordInput === INDEX_PASSWORD) {
+      setUnlocked(true);
+
+      toast({
+        title: "Access granted",
+        description: "Welcome to Vigil.",
+      });
+    } else {
+      setPasswordInput("");
+      toast({
+        title: "Incorrect password",
+        description: "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // If not unlocked, show a simple password screen.
+  // Other routes (/status, /app/:id, etc.) are unaffected.
+  if (!unlocked) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <Card className="border-card-border">
+            <CardHeader className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-muted-foreground" />
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Restricted
+                </span>
+              </div>
+              <CardTitle className="text-xl font-semibold">
+                Enter passphrase
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleUnlock} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="vigil-pass">Password</Label>
+                  <Input
+                    id="vigil-pass"
+                    type="password"
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    autoComplete="off"
+                    autoFocus
+                    placeholder="Enter password"
+                  />
+                </div>
+                <Button type="submit" className="w-full">
+                  Unlock
+                </Button>
+                <p className="text-xs text-muted-foreground text-center">
+                  Public status pages remain accessible without this password.
+                </p>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
